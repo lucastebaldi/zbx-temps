@@ -1,0 +1,266 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: c3aa0ca48f184b27a762787689e8ebad
+    name: Templates/barrainfo
+  templates:
+  - uuid: 6673d9122c1049ceb32d0f778872915a
+    template: Temperaturas Proxmox by Zabbix agent
+    name: Temperaturas Proxmox by Zabbix agent
+    description: 'Temperatura de CPU (lm-sensors), NVMe e HDs/SSDs (smartctl) em hosts Proxmox/Linux.
+
+      Requer /barrainfo/zbx-temps/zbx-temps.sh via cron e UserParameter temps.json no agent.
+
+      Discos identificados pelo número de série. HDs em standby não são acordados (valor descartado).
+
+      barrainfo'
+    groups:
+    - name: Templates/barrainfo
+    items:
+    - uuid: ee5a86a5821b42bda0f650d0d57007ed
+      name: 'Temperaturas: dados brutos'
+      key: temps.json
+      history: '0'
+      value_type: TEXT
+      description: JSON gerado pelo /barrainfo/zbx-temps/zbx-temps.sh (cron, 1x/min).
+      tags:
+      - tag: component
+        value: raw
+    - uuid: 2c2b7ffb6c4f42aab83fe07794a077aa
+      name: 'Temperaturas: idade da coleta'
+      type: DEPENDENT
+      key: temps.age
+      delay: '0'
+      history: 7d
+      units: s
+      preprocessing:
+      - type: JAVASCRIPT
+        parameters:
+        - return Math.floor(Date.now() / 1000) - JSON.parse(value).timestamp;
+      master_item:
+        key: temps.json
+      tags:
+      - tag: component
+        value: health
+      triggers:
+      - uuid: ba2a1f60b43647f780889a33b13fa775
+        expression: last(/Temperaturas Proxmox by Zabbix agent/temps.age)>{$TEMP.DATA.MAXAGE} or nodata(/Temperaturas Proxmox by Zabbix agent/temps.age,10m)=1
+        name: Coleta de temperaturas parada (cron/script zbx-temps)
+        opdata: 'Idade: {ITEM.LASTVALUE1}'
+        priority: AVERAGE
+        description: O arquivo /barrainfo/zbx-temps/temps.json não está sendo atualizado. Verifique o cron /etc/cron.d/zbx-temps e rode o script manualmente.
+        tags:
+        - tag: scope
+          value: notice
+    discovery_rules:
+    - uuid: a1c5dfacc6a24203871379812b2e1049
+      name: 'Descoberta: CPU'
+      type: DEPENDENT
+      key: temps.cpu.discovery
+      delay: '0'
+      item_prototypes:
+      - uuid: bba7ce680c034fdbaa11be24d48c82d2
+        name: 'CPU {#NAME}: temperatura'
+        type: DEPENDENT
+        key: temps.cpu[{#ID}]
+        delay: '0'
+        history: 90d
+        value_type: FLOAT
+        units: °C
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.cpu[?(@.id=='{#ID}')].temp.first()
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: temps.json
+        tags:
+        - tag: component
+          value: cpu
+        trigger_prototypes:
+        - uuid: 127d3f537a1b4bc5a969ea9cea0d5060
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)>{$TEMP.CPU.CRIT}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)<{$TEMP.CPU.CRIT}-3
+          name: 'CPU {#NAME}: temperatura crítica (acima de {$TEMP.CPU.CRIT}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: HIGH
+          tags:
+          - tag: scope
+            value: availability
+        - uuid: 03efd912ac334d95b0c2304a3fa2f7be
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)>{$TEMP.CPU.WARN}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)<{$TEMP.CPU.WARN}-3
+          name: 'CPU {#NAME}: temperatura alta (acima de {$TEMP.CPU.WARN}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: WARNING
+          tags:
+          - tag: scope
+            value: availability
+          dependencies:
+          - name: 'CPU {#NAME}: temperatura crítica (acima de {$TEMP.CPU.CRIT}°C por 5m)'
+            expression: min(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)>{$TEMP.CPU.CRIT}
+            recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.cpu[{#ID}],5m)<{$TEMP.CPU.CRIT}-3
+      master_item:
+        key: temps.json
+      lld_macro_paths:
+      - lld_macro: '{#ID}'
+        path: $.id
+      - lld_macro: '{#NAME}'
+        path: $.name
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.cpu
+    - uuid: 33d374817c8e4081b40c692ceef3abdb
+      name: 'Descoberta: NVMe'
+      type: DEPENDENT
+      key: temps.nvme.discovery
+      delay: '0'
+      item_prototypes:
+      - uuid: fda294c3ccf644bdbd8ac18212b66a3f
+        name: 'NVMe {#DEV} ({#MODEL}, SN {#ID}): temperatura'
+        type: DEPENDENT
+        key: temps.nvme[{#ID}]
+        delay: '0'
+        history: 90d
+        value_type: FLOAT
+        units: °C
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.nvme[?(@.id=='{#ID}')].temp.first()
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: temps.json
+        tags:
+        - tag: component
+          value: storage
+        trigger_prototypes:
+        - uuid: 56ed95746a974e5b852f1f2343c32b37
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)>{$TEMP.NVME.CRIT:"{#ID}"}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)<{$TEMP.NVME.CRIT:"{#ID}"}-3
+          name: 'NVMe {#DEV} ({#MODEL}, SN {#ID}): temperatura crítica (acima de {$TEMP.NVME.CRIT:"{#ID}"}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: HIGH
+          tags:
+          - tag: scope
+            value: availability
+        - uuid: 36c07b6730984d74a23f285e9b8285d2
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)>{$TEMP.NVME.WARN:"{#ID}"}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)<{$TEMP.NVME.WARN:"{#ID}"}-3
+          name: 'NVMe {#DEV} ({#MODEL}, SN {#ID}): temperatura alta (acima de {$TEMP.NVME.WARN:"{#ID}"}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: WARNING
+          tags:
+          - tag: scope
+            value: availability
+          dependencies:
+          - name: 'NVMe {#DEV} ({#MODEL}, SN {#ID}): temperatura crítica (acima de {$TEMP.NVME.CRIT:"{#ID}"}°C por 5m)'
+            expression: min(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)>{$TEMP.NVME.CRIT:"{#ID}"}
+            recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.nvme[{#ID}],5m)<{$TEMP.NVME.CRIT:"{#ID}"}-3
+      master_item:
+        key: temps.json
+      lld_macro_paths:
+      - lld_macro: '{#ID}'
+        path: $.id
+      - lld_macro: '{#DEV}'
+        path: $.dev
+      - lld_macro: '{#MODEL}'
+        path: $.model
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.nvme
+    - uuid: f39f0186b30b45128c4bb4c8b31f70f2
+      name: 'Descoberta: HDs/SSDs SATA-SAS'
+      type: DEPENDENT
+      key: temps.disk.discovery
+      delay: '0'
+      item_prototypes:
+      - uuid: ee5452d0f42c41fbb392755775dbfbf1
+        name: 'Disco {#DEV} ({#MODEL}, SN {#ID}): temperatura'
+        type: DEPENDENT
+        key: temps.disk[{#ID}]
+        delay: '0'
+        history: 90d
+        value_type: FLOAT
+        units: °C
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.disks[?(@.id=='{#ID}')].temp.first()
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: temps.json
+        tags:
+        - tag: component
+          value: storage
+        trigger_prototypes:
+        - uuid: c91188ed20714f49ad2a8d4025456f16
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)>{$TEMP.DISK.CRIT:"{#ID}"}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)<{$TEMP.DISK.CRIT:"{#ID}"}-3
+          name: 'Disco {#DEV} ({#MODEL}, SN {#ID}): temperatura crítica (acima de {$TEMP.DISK.CRIT:"{#ID}"}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: HIGH
+          tags:
+          - tag: scope
+            value: availability
+        - uuid: ae5b53ed294d4a37a71c63a1c707534b
+          expression: min(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)>{$TEMP.DISK.WARN:"{#ID}"}
+          recovery_mode: RECOVERY_EXPRESSION
+          recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)<{$TEMP.DISK.WARN:"{#ID}"}-3
+          name: 'Disco {#DEV} ({#MODEL}, SN {#ID}): temperatura alta (acima de {$TEMP.DISK.WARN:"{#ID}"}°C por 5m)'
+          opdata: 'Atual: {ITEM.LASTVALUE1}'
+          priority: WARNING
+          tags:
+          - tag: scope
+            value: availability
+          dependencies:
+          - name: 'Disco {#DEV} ({#MODEL}, SN {#ID}): temperatura crítica (acima de {$TEMP.DISK.CRIT:"{#ID}"}°C por 5m)'
+            expression: min(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)>{$TEMP.DISK.CRIT:"{#ID}"}
+            recovery_expression: max(/Temperaturas Proxmox by Zabbix agent/temps.disk[{#ID}],5m)<{$TEMP.DISK.CRIT:"{#ID}"}-3
+      master_item:
+        key: temps.json
+      lld_macro_paths:
+      - lld_macro: '{#ID}'
+        path: $.id
+      - lld_macro: '{#DEV}'
+        path: $.dev
+      - lld_macro: '{#MODEL}'
+        path: $.model
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.disks
+    tags:
+    - tag: class
+      value: hardware
+    - tag: target
+      value: temperature
+    macros:
+    - macro: '{$TEMP.CPU.WARN}'
+      value: '80'
+      description: 'CPU: limite de alerta (°C)'
+    - macro: '{$TEMP.CPU.CRIT}'
+      value: '90'
+      description: 'CPU: limite crítico (°C)'
+    - macro: '{$TEMP.NVME.WARN}'
+      value: '65'
+      description: 'NVMe: limite de alerta (°C). Aceita contexto por serial: {$TEMP.NVME.WARN:"SERIAL"}'
+    - macro: '{$TEMP.NVME.CRIT}'
+      value: '75'
+      description: 'NVMe: limite crítico (°C). Aceita contexto por serial'
+    - macro: '{$TEMP.DISK.WARN}'
+      value: '45'
+      description: 'HD/SSD SATA-SAS: limite de alerta (°C). Aceita contexto por serial: {$TEMP.DISK.WARN:"SERIAL"}'
+    - macro: '{$TEMP.DISK.CRIT}'
+      value: '55'
+      description: 'HD/SSD SATA-SAS: limite crítico (°C). Aceita contexto por serial'
+    - macro: '{$TEMP.DATA.MAXAGE}'
+      value: '300'
+      description: Idade máxima (s) do JSON antes de alertar coleta parada
